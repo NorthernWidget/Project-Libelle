@@ -182,31 +182,39 @@ Block 3 (0x18–0x1F)   Integrity + administration
 
 **Page 1 (0x20–0x3F) — Sensor data (SRAM)**
 
+Chip table:
+
+| Index | Chip | Measurements |
+|-------|------|--------------|
+| 0 | VEML6075 | UVA, UVB |
+| 1 | VEML6030 | ambient light, white |
+| 2 | ADS1115 | IR short, IR mid, thermistor temperature |
+| 3 | ADXL343 | X, Y, Z (hardware v2 only) |
+
+Block 0 (0x20–0x27) is the universal block defined by [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification#page-1--sensor-data): status (ready, per-chip fault bits, pan-fault), control (trigger, chip select, sleep), reading counter, device config byte at 0x26, latched fault code at 0x27. Device data begins at 0x28. Config (0x26): bits 1:0 = update period (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); bit 2 = auto-range disable; bit 3 = run auto-range once (self-clearing); bits 7:4 reserved. Libelle's 26 data bytes exceed Blocks 1–3, so the accelerometer continues on Page 3 (0x60–0x7F).
+
 ```
-Block 0 (0x20–0x27)   VEML6030 — visible light
-  0x20        Status       bit 0=ready, bit 1=VEML6075 fault,
-                           bit 2=VEML6030 fault, bit 3=ADS1115 fault,
-                           bit 7=pan-fault
-  0x21        Extended faults (reserved, 0x00)
-  0x22–0x23   ALS          uint16, raw VEML6030 counts, little-endian
-  0x24–0x25   White        uint16, raw VEML6030 counts, little-endian
-  0x26–0x27   Lux mult     uint16, auto-range scaler (ALS × mult × 0.0036 → lux)
+Block 1 (0x28–0x2F)   VEML6030 — visible light
+  0x28–0x29   ALS          uint16, raw VEML6030 counts, little-endian
+  0x2A–0x2B   White        uint16, raw VEML6030 counts, little-endian
+  0x2C–0x2D   Lux mult     uint16, auto-range scaler (ALS × mult × 0.0036 → lux)
+  0x2E–0x2F   Reserved
 
-Block 1 (0x28–0x2F)   VEML6075 — UV
-  0x28–0x2B   UVA          int32, compensated counts, little-endian
-  0x2C–0x2F   UVB          int32, compensated counts, little-endian
+Block 2 (0x30–0x37)   VEML6075 — UV
+  0x30–0x33   UVA          int32, compensated counts, little-endian
+  0x34–0x37   UVB          int32, compensated counts, little-endian
 
-Block 2 (0x30–0x37)   ADS1115 — IR + temperature
-  0x30–0x31   IR Short     uint16, raw ADC counts (×1.25e-4 → V)
-  0x32–0x33   IR Mid       uint16, raw ADC counts (×1.25e-4 → V)
-  0x34–0x35   Temperature  uint16, raw ADC counts (Steinhart-Hart → °C in library)
-  0x36–0x37   Reserved
-
-Block 3 (0x38–0x3F)   ADXL343 — accelerometer (hardware v2 only; see below)
-  0x38–0x39   Accel X   int16, little-endian
-  0x3A–0x3B   Accel Y   int16, little-endian
-  0x3C–0x3D   Accel Z   int16, little-endian
+Block 3 (0x38–0x3F)   ADS1115 — IR + temperature
+  0x38–0x39   IR Short     uint16, raw ADC counts (×1.25e-4 → V)
+  0x3A–0x3B   IR Mid       uint16, raw ADC counts (×1.25e-4 → V)
+  0x3C–0x3D   Temperature  uint16, raw ADC counts (Steinhart-Hart → °C in library)
   0x3E–0x3F   Reserved
+
+Page 3, Block 0 (0x60–0x67)   ADXL343 — accelerometer (hardware v2 only; see below)
+  0x60–0x61   Accel X   int16, little-endian
+  0x62–0x63   Accel Y   int16, little-endian
+  0x64–0x65   Accel Z   int16, little-endian
+  0x66–0x67   Reserved
 ```
 
 No Page 2. Calibration constants (Steinhart-Hart coefficients, UV cross-talk compensation) are currently hardcoded in the library. If per-unit calibration is added, Page 2 is the natural home. Accelerometer calibration offsets, if needed, would also go in Page 2 following the pattern of the Apis sensor.
