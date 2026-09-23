@@ -255,7 +255,7 @@ Implements [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device
 Block 0:  Schema=0x01, Name='L','i','b','e','l','l','e'
 Block 1:  HW major=[mfr], HW minor=[mfr], FW patch=[mfr], 0x00,0x00,0x00, Reserved
 Block 2:  Board type=0x4C01 ('L'=0x4C, rev 1), Group ID=[mfr], Unique ID=[mfr], FirmwareID=0x0000
-Block 3:  Reserved, Magic=0x00, CRC=[computed], I2C address=0x4C (UP) / 0x0C (DOWN)
+Block 3:  Reserved, Magic=0x4E, CRC=[computed], I2C address=0x4C (UP) / 0x0C (DOWN)
 ```
 
 Legacy deployed units carry board types `0x2300`/`0x2301` (formerly Dyson SW, Monarch SW).
