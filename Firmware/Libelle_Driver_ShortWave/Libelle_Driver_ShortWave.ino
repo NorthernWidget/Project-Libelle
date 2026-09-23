@@ -148,14 +148,14 @@ void loop() {
 		}
 		// digitalWrite(9, HIGH); //DEBUG!
 		Reg[CTRL] = Reg[CTRL] &= 0x7F; //Clear ready flag only while new vals being written
-		SplitAndLoad(0x0B, GetALS()); //Load ALS value
-		SplitAndLoad(0x0D, GetWhite()); //Load white value
-		SplitAndLoad(0x02, long(GetUV(0))); //Load UVA
-		SplitAndLoad(0x07, long(GetUV(1))); //Load UVB
-		SplitAndLoad(0x10, GetLuxGain()); //Load lux multiplier 
-		SplitAndLoad(0x13, GetADC(0));
-		SplitAndLoad(0x15, GetADC(1));
-		SplitAndLoad(0x17, GetADC(2));
+		SplitAndLoad(0x28, GetALS()); //Load ALS value (Schema 1 Block 1: uint16 raw VEML6030 counts)
+		SplitAndLoad(0x2A, GetWhite()); //Load white value (Block 1: uint16 raw counts)
+		SplitAndLoad(0x30, long(GetUV(0))); //Load UVA (Block 2: int32 compensated counts)
+		SplitAndLoad(0x34, long(GetUV(1))); //Load UVB (Block 2: int32; the legacy map wrote this at 0x07 while the library read 0x06)
+		SplitAndLoad(0x2C, GetLuxGain()); //Load lux multiplier (Block 1: uint16 auto-range scaler)
+		SplitAndLoad(0x3A, GetADC(0)); //IR mid (Block 3: uint16 raw ADS1115 counts)
+		SplitAndLoad(0x38, GetADC(1)); //IR short (Block 3)
+		SplitAndLoad(0x3C, GetADC(2)); //Thermistor (Block 3)
 
 		Reg[CTRL] = Reg[CTRL] |= 0x80; //Set ready flag
 		digitalWrite(9, LOW); //DEBUG!
