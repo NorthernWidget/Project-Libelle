@@ -111,11 +111,11 @@ Libelle pyroDown(DOWN);
 
 ## Register map and firmware internals
 
-The Libelle firmware runs on an ATtiny841 bridge, which exposes an I2C slave register map to the host logger. Default I2C addresses: `0x40` (UP orientation), `0x41` (DOWN orientation). The onboard ADXL343 accelerometer is read directly by the master on the same I2C bus (not bridged through the ATtiny).
+The Libelle firmware runs on an ATtiny841 bridge, which exposes an I2C peripheral register map to the host logger. Default I2C addresses: `0x4C` (UP orientation, Schema 1 `'L'`) and `0x0C` (DOWN orientation: the UP address XOR `0x40`, selected by the solder jumper); the address stored in Page 0 byte `0x1F` overrides the UP default. Firmware before Schema 1 answered at `0x40` (UP) and `0x41` (DOWN). The onboard ADXL343 accelerometer is read directly by the master on the same I2C bus (not bridged through the ATtiny).
 
-Two layouts exist: the **current firmware** (deployed) and the **proposed** layout under [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification) Schema 1.
+The firmware on `master` (`Firmware/Libelle_Driver_ShortWave`) implements [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification) Schema 1 (firmware patch 1, 2026-09-23, unreleased and not yet validated on hardware). The layout that the last released firmware exposed is kept below for anyone reading a deployed unit.
 
-### Current register map (deployed firmware)
+### Legacy register map (firmware before Schema 1)
 
 26-byte array. Status ready flag is bit 7.
 
@@ -149,7 +149,7 @@ Byte 3 (MSB): Reg[0x09] = UVB true byte 2  ← true byte 3 (Reg[0x0A]) dropped
 
 Result: `getUVB()` returns approximately `true_UVB × 256`. All historical UVB data collected with this firmware and library combination is affected by this systematic error. See [issue #TBD](https://github.com/NorthernWidget/Project-Libelle/issues) for tracking.
 
-### Proposed register map (NW-Device-Specification Schema 1)
+### Register map (NW-Device-Specification Schema 1)
 
 Two 32-byte pages. The UVB register mismatch is corrected in this layout.
 
@@ -175,7 +175,7 @@ Block 2 (0x10–0x17)   Serial number
 
 Block 3 (0x18–0x1F)   Integrity + administration
   0x18–0x1C   0x00 ×5           Reserved
-  0x1D        0x00              Magic byte (reserved; purpose TBD)
+  0x1D        0x4E              Magic byte
   0x1E        [computed]        CRC-8 of bytes 0x00–0x1D
   0x1F        0x4C or 0x0C      I2C address (0x4C=UP, 0x0C=DOWN; writable)
 ```
@@ -191,7 +191,7 @@ Chip table:
 | 2 | ADS1115 | IR short, IR mid, thermistor temperature |
 | 3 | ADXL343 | X, Y, Z (hardware v2 only) |
 
-Block 0 (0x20–0x27) is the universal block defined by [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification#page-1-sensor-data): status (ready, per-chip fault bits, pan-fault), control (trigger, chip select, sleep), reading counter, device config byte at 0x26, latched fault code at 0x27. Device data begins at 0x28. Config (0x26): bits 1:0 = update period (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); bit 2 = auto-range disable; bit 3 = run auto-range once (self-clearing); bits 7:4 reserved. Libelle's 26 data bytes exceed Blocks 1–3, so the accelerometer continues on Page 3 (0x60–0x7F).
+Block 0 (0x20–0x27) is the universal block defined by [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification#page-1-sensor-data). On Libelle: a reading starts on a trigger (Control `0x21` bit 0) or on the free-running timer that Config `0x26` bits 1:0 select (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); Config bit 2 disables the VEML6030 auto-range and bit 3 runs it once (self-clearing); Control bit 1 selects the VEML6075, bit 2 the VEML6030 and bit 3 the ADS1115; ready (Status `0x20` bit 0) clears while the chips are read and returns with the reading counter (`0x22–0x23`) incremented. Boot latches unit kind 6 (reset), or kind 3 if Page 0 failed its CRC; the chip reads discard acknowledges, so per-chip faults are not yet reported. The readings-requested word and the sleep bit are accepted without effect: status (ready, per-chip fault bits, pan-fault), control (trigger, chip select, sleep), reading counter, device config byte at 0x26, latched fault code at 0x27. Device data begins at 0x28. Config (0x26): bits 1:0 = update period (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); bit 2 = auto-range disable; bit 3 = run auto-range once (self-clearing); bits 7:4 reserved. Libelle's 26 data bytes exceed Blocks 1–3, so the accelerometer continues on Page 3 (0x60–0x7F).
 
 ```
 Block 1 (0x28–0x2F)   VEML6030 — visible light
