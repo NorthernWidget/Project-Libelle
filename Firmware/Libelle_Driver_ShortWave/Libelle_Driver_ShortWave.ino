@@ -5,7 +5,7 @@
 #include <EEPROM.h>
 //Commands
 
-#define CTRL 0x26  //Define location of onboard control/confiuration register (Schema 1 Page 1 Config byte; was 0x00, which is now the Page 0 schema byte)
+#define CTRL 0x46  //Define location of onboard control/confiuration register (Schema 1 Page 2 Config byte; was 0x00, which is now the Page 0 schema byte)
 
 //Firmware patch version: bump on any behavioural change visible to the
 //library. The hardware version lives in Page 0 (EEPROM), written at
@@ -13,19 +13,21 @@
 //Page 0 at 0x0A and recomputes the CRC there (NW-Device-Specification).
 #define FW_FW_PATCH 1
 
-//Page 0 (identity, 32 bytes) is the top of EEPROM: 0x1E0-0x1FF on the
-//ATtiny841's 512-byte EEPROM. Written once by NW-Provision; read at boot.
-#define PAGE0_BASE   (E2END + 1 - 32)
+//The stored pages are the top 64 bytes of EEPROM in bus order: Page 0
+//(identity) at 0x1C0-0x1DF on the ATtiny841's 512-byte EEPROM, Page 1
+//(calibration; Libelle has none) at 0x1E0-0x1FF. Page 0 is written once by
+//NW-Provision and read at boot; Page 1 is served as zeros.
+#define PAGE0_BASE   (E2END + 1 - 64)
 #define REG_I2C_ADDR 0x1F
 #define ADR_DEFAULT  0x4C  //Schema 1 'L' (UP orientation); used when Page 0 byte 0x1F is 0xFF (was 0x40)
 #define ADR_DOWN_XOR 0x40  //DOWN orientation (solder jumper): the UP address XOR 0x40, so 0x4C -> 0x0C
 
-//Page 1 Block 0 (NW-Device-Specification): universal status and control.
-#define REG_STATUS   0x20
-#define REG_CTRL     0x21
-#define REG_COUNTER  0x22
-#define REG_REQUEST  0x24  //Readings requested, uint16 LE, writable; Libelle has no chip power to hold, so it only accepts the write
-#define REG_REPORT   0x27
+//Page 2 Block 0 (NW-Device-Specification): universal status and control.
+#define REG_STATUS   0x40
+#define REG_CTRL     0x41
+#define REG_COUNTER  0x42
+#define REG_REQUEST  0x44  //Readings requested, uint16 LE, writable; Libelle has no chip power to hold, so it only accepts the write
+#define REG_REPORT   0x47
 #define BIT_READY    0x01
 #define BIT_PANFAULT 0x80
 #define BIT_TRIGGER  0x01
@@ -87,9 +89,9 @@ volatile uint8_t ADR = ADR_DEFAULT; //I2C address: Page 0 byte 0x1F (EEPROM), or
 
 uint8_t Config = 0; //Global config value
 
-uint8_t Reg[64] = {0}; //Initialize registers; 0x00-0x1F = Page 0 (identity), 0x20-0x27 = Page 1 Block 0 (status/control), 0x28-0x3F = Page 1 sensor data
-#define DATA_BASE 0x28 //First sensor data register (Page 1 Block 1)
-#define DATA_LEN  22   //0x28-0x3D: the bytes a reading writes
+uint8_t Reg[96] = {0}; //Initialize registers; 0x00-0x1F = Page 0 (identity), 0x20-0x3F = Page 1 (calibration: none, zeros), 0x40-0x47 = Page 2 Block 0 (status/control), 0x48-0x5F = Page 2 sensor data
+#define DATA_BASE 0x48 //First sensor data register (Page 2 Block 1)
+#define DATA_LEN  22   //0x48-0x5D: the bytes a reading writes
 uint8_t Staged[DATA_LEN] = {0}; //A reading is assembled here over ~2 s and copied into Reg with the counter, so a page read never sees half a reading
 bool page0Valid = false; //Page 0 CRC matched what NW-Provision wrote
 bool uvNoAck = false;  //VEML6075 did not acknowledge during the last reading
@@ -117,7 +119,7 @@ void loadPage0() {
 }
 
 //Registers a controller may write. Everything else is read-only and writes
-//to it are ignored (NW-Device-Specification, Page 1 rules).
+//to it are ignored (NW-Device-Specification, Page 2 rules).
 bool isWritable(uint8_t pos) {
 	return pos == REG_CTRL || pos == CTRL || pos == REG_I2C_ADDR
 	    || pos == REG_REQUEST || pos == REG_REQUEST + 1;
@@ -191,18 +193,18 @@ void loop() {
 		}
 		// digitalWrite(9, HIGH); //DEBUG!
 		if(doVis) {
-			SplitAndLoad(0x28, GetALS()); //Load ALS value (Schema 1 Block 1: uint16 raw VEML6030 counts)
-			SplitAndLoad(0x2A, GetWhite()); //Load white value (Block 1: uint16 raw counts)
-			SplitAndLoad(0x2C, GetLuxGain()); //Load lux multiplier (Block 1: uint16 auto-range scaler)
+			SplitAndLoad(0x48, GetALS()); //Load ALS value (Schema 1 Block 1: uint16 raw VEML6030 counts)
+			SplitAndLoad(0x4A, GetWhite()); //Load white value (Block 1: uint16 raw counts)
+			SplitAndLoad(0x4C, GetLuxGain()); //Load lux multiplier (Block 1: uint16 auto-range scaler)
 		}
 		if(doUV) {
-			SplitAndLoad(0x30, long(GetUV(0))); //Load UVA (Block 2: int32 compensated counts)
-			SplitAndLoad(0x34, long(GetUV(1))); //Load UVB (Block 2: int32; the legacy map wrote this at 0x07 while the library read 0x06)
+			SplitAndLoad(0x50, long(GetUV(0))); //Load UVA (Block 2: int32 compensated counts)
+			SplitAndLoad(0x54, long(GetUV(1))); //Load UVB (Block 2: int32; the legacy map wrote this at 0x07 while the library read 0x06)
 		}
 		if(doADC) {
-			SplitAndLoad(0x3A, GetADC(0)); //IR mid (Block 3: uint16 raw ADS1115 counts)
-			SplitAndLoad(0x38, GetADC(1)); //IR short (Block 3)
-			SplitAndLoad(0x3C, GetADC(2)); //Thermistor (Block 3)
+			SplitAndLoad(0x5A, GetADC(0)); //IR mid (Block 3: uint16 raw ADS1115 counts)
+			SplitAndLoad(0x58, GetADC(1)); //IR short (Block 3)
+			SplitAndLoad(0x5C, GetADC(2)); //Thermistor (Block 3)
 		}
 
 		//Reading complete: copy the staged data in, load status and fault, bump
@@ -596,7 +598,7 @@ int ReadWord_LE(uint8_t Adr, uint8_t Command)  //Send command value, returns ent
 	return ((ByteHigh << 8) | ByteLow); //DEBUG!
 }
 
-void SplitAndLoad(uint8_t Pos, unsigned int Val) //Write 16 bits into the staged reading; Pos is the Page 1 register address
+void SplitAndLoad(uint8_t Pos, unsigned int Val) //Write 16 bits into the staged reading; Pos is the Page 2 register address
 {
 	uint8_t Len = sizeof(Val);
 	for(int i = Pos; i < Pos + Len; i++) {
