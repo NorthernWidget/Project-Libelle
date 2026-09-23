@@ -151,9 +151,9 @@ Result: `getUVB()` returns approximately `true_UVB × 256`. All historical UVB d
 
 ### Register map (NW-Device-Specification Schema 1)
 
-Two 32-byte pages. The UVB register mismatch is corrected in this layout.
+Three 32-byte pages: identity, calibration, and sensor data. Pages renumbered 2026-09-23 (spec 4c3b18d): calibration is Page 1 at 0x20, data Page 2 at 0x40. The UVB register mismatch is corrected in this layout.
 
-**Page 0 (0x00–0x1F) — Identity (EEPROM)**
+**Page 0 (0x00–0x1F): Identity (EEPROM)**
 
 ```
 Block 0 (0x00–0x07)   Core identity
@@ -180,7 +180,11 @@ Block 3 (0x18–0x1F)   Integrity + administration
   0x1F        0x4C or 0x0C      I2C address (0x4C=UP, 0x0C=DOWN; writable)
 ```
 
-**Page 1 (0x20–0x3F) — Sensor data (SRAM)**
+**Page 1 (0x20–0x3F): Calibration (EEPROM)**
+
+Libelle stores no calibration. The page is reserved and the firmware serves it as zeros. Calibration constants (Steinhart-Hart coefficients, UV cross-talk compensation) are hardcoded in the library. If you add per-unit calibration, Page 1 is its home, and accelerometer offsets would follow the Apis pattern there.
+
+**Page 2 (0x40–0x5F): Sensor data (SRAM)**
 
 Chip table:
 
@@ -191,41 +195,39 @@ Chip table:
 | 2 | ADS1115 | IR short, IR mid, thermistor temperature |
 | 3 | ADXL343 | X, Y, Z (hardware v2 only) |
 
-Block 0 (0x20–0x27) is the universal block defined by [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification#page-1-sensor-data). On Libelle: a reading starts on a trigger (Control `0x21` bit 0) or on the free-running timer that Config `0x26` bits 1:0 select (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); Config bit 2 disables the VEML6030 auto-range and bit 3 runs it once (self-clearing); Control bit 1 selects the VEML6075, bit 2 the VEML6030 and bit 3 the ADS1115; ready (Status `0x20` bit 0) clears while the chips are read and returns with the reading counter (`0x22–0x23`) incremented; the data registers change only at that moment, all together, so a page read never sees part of a reading. Boot latches unit kind 6 (reset), or kind 3 if Page 0 failed its CRC; a chip that does not acknowledge its address during a reading gets its status bit and the latched code kind 1 (no acknowledge); the firmware does not yet check the data a chip returns. The readings-requested word and the sleep bit are accepted without effect: status (ready, per-chip fault bits, pan-fault), control (trigger, chip select, sleep), reading counter, device config byte at 0x26, latched fault code at 0x27. Device data begins at 0x28. Config (0x26): bits 1:0 = update period (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); bit 2 = auto-range disable; bit 3 = run auto-range once (self-clearing); bits 7:4 reserved. Libelle's 26 data bytes exceed Blocks 1–3, so the accelerometer continues on Page 3 (0x60–0x7F).
+Block 0 (0x40–0x47) is the universal block defined by [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification#page-2-sensor-data). On Libelle: a reading starts on a trigger (Control `0x41` bit 0) or on the free-running timer that Config `0x46` bits 1:0 select (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); Config bit 2 disables the VEML6030 auto-range and bit 3 runs it once (self-clearing); Control bit 1 selects the VEML6075, bit 2 the VEML6030 and bit 3 the ADS1115; ready (Status `0x40` bit 0) clears while the chips are read and returns with the reading counter (`0x42–0x43`) incremented; the data registers change only at that moment, all together, so a page read never sees part of a reading. Boot latches unit kind 6 (reset), or kind 3 if Page 0 failed its CRC; a chip that does not acknowledge its address during a reading gets its status bit and the latched code kind 1 (no acknowledge); the firmware does not yet check the data a chip returns. The readings-requested word and the sleep bit are accepted without effect: status (ready, per-chip fault bits, pan-fault), control (trigger, chip select, sleep), reading counter, device config byte at 0x46, latched fault code at 0x47. Device data begins at 0x48. Config (0x46): bits 1:0 = update period (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); bit 2 = auto-range disable; bit 3 = run auto-range once (self-clearing); bits 7:4 reserved. Libelle's 26 data bytes exceed Blocks 1–3, so the accelerometer continues on Page 3 (0x60–0x7F).
 
 ```
-Block 1 (0x28–0x2F)   VEML6030 — visible light
-  0x28–0x29   ALS          uint16, raw VEML6030 counts, little-endian
-  0x2A–0x2B   White        uint16, raw VEML6030 counts, little-endian
-  0x2C–0x2D   Lux mult     uint16, auto-range scaler (ALS × mult × 0.0036 → lux)
-  0x2E–0x2F   Reserved
+Block 1 (0x48–0x4F)   VEML6030: visible light
+  0x48–0x49   ALS          uint16, raw VEML6030 counts, little-endian
+  0x4A–0x4B   White        uint16, raw VEML6030 counts, little-endian
+  0x4C–0x4D   Lux mult     uint16, auto-range scaler (ALS × mult × 0.0036 → lux)
+  0x4E–0x4F   Reserved
 
-Block 2 (0x30–0x37)   VEML6075 — UV
-  0x30–0x33   UVA          int32, compensated counts, little-endian
-  0x34–0x37   UVB          int32, compensated counts, little-endian
+Block 2 (0x50–0x57)   VEML6075: UV
+  0x50–0x53   UVA          int32, compensated counts, little-endian
+  0x54–0x57   UVB          int32, compensated counts, little-endian
 
-Block 3 (0x38–0x3F)   ADS1115 — IR + temperature
-  0x38–0x39   IR Short     uint16, raw ADC counts (×1.25e-4 → V)
-  0x3A–0x3B   IR Mid       uint16, raw ADC counts (×1.25e-4 → V)
-  0x3C–0x3D   Temperature  uint16, raw ADC counts (Steinhart-Hart → °C in library)
-  0x3E–0x3F   Reserved
+Block 3 (0x58–0x5F)   ADS1115: IR + temperature
+  0x58–0x59   IR Short     uint16, raw ADC counts (×1.25e-4 → V)
+  0x5A–0x5B   IR Mid       uint16, raw ADC counts (×1.25e-4 → V)
+  0x5C–0x5D   Temperature  uint16, raw ADC counts (Steinhart-Hart → °C in library)
+  0x5E–0x5F   Reserved
 
-Page 3, Block 0 (0x60–0x67)   ADXL343 — accelerometer (hardware v2 only; see below)
+Page 3, Block 0 (0x60–0x67)   ADXL343: accelerometer (hardware v2 only; see below)
   0x60–0x61   Accel X   int16, little-endian
   0x62–0x63   Accel Y   int16, little-endian
   0x64–0x65   Accel Z   int16, little-endian
   0x66–0x67   Reserved
 ```
 
-No Page 2. Calibration constants (Steinhart-Hart coefficients, UV cross-talk compensation) are currently hardcoded in the library. If per-unit calibration is added, Page 2 is the natural home. Accelerometer calibration offsets, if needed, would also go in Page 2 following the pattern of the Apis sensor.
-
-**Accelerometer (ADXL343):** In the current hardware (v1), the ADXL343 is wired to the master's I2C bus and read directly by the library at address `0x1D` (UP) or `0x53` (DOWN) — it is not bridged through the ATtiny. This requires the logger to manage two I2C addresses. In hardware v2, the ADXL343 will move to the ATtiny's software I2C bus so all data is accessible through a single address; Block 3 of Page 1 is reserved for this. See [issue #19](https://github.com/NorthernWidget-Skunkworks/Project-Libelle/issues/19).
+**Accelerometer (ADXL343):** In the current hardware (v1), the ADXL343 is wired to the master's I2C bus and read directly by the library at address `0x1D` (UP) or `0x53` (DOWN) — it is not bridged through the ATtiny. This requires the logger to manage two I2C addresses. In hardware v2, the ADXL343 will move to the ATtiny's software I2C bus so all data is accessible through a single address; Page 3, Block 0 (0x60–0x67) is reserved for this. See [issue #19](https://github.com/NorthernWidget-Skunkworks/Project-Libelle/issues/19).
 
 ### Migration notes for the Schema 1 update (done 2026-09-23, firmware patch 1)
 
-1. **Status bit:** the ready flag moved from bit 7 of `Reg[0x00]` to Status `0x20` bit 0, with the reading counter at `0x22–0x23` beside it.
-2. **UVB register offset:** the firmware writes UVA at `0x30` and UVB at `0x34` (Page 1, Block 2, int32 each); the library reads the same addresses, so the ×256 error is gone for Schema 1 pairs. Data from the legacy pair keeps the error.
-3. **Auto-range:** the legacy CTRL bits 2 and 3 became Config `0x26` bits 2 (auto-range disable) and 3 (run auto-range once, self-clearing).
+1. **Status bit:** the ready flag moved from bit 7 of `Reg[0x00]` to Status `0x40` bit 0, with the reading counter at `0x42–0x43` beside it.
+2. **UVB register offset:** the firmware writes UVA at `0x50` and UVB at `0x54` (Page 2, Block 2, int32 each); the library reads the same addresses, so the ×256 error is gone for Schema 1 pairs. Data from the legacy pair keeps the error.
+3. **Auto-range:** the legacy CTRL bits 2 and 3 became Config `0x46` bits 2 (auto-range disable) and 3 (run auto-range once, self-clearing).
 
 ## Mechanical
 
@@ -247,7 +249,7 @@ SolidWorks source files and STLs are in [`Mechanical/`](Mechanical/).
 
 ## NW-Device-Specification — Schema 1, Page 0
 
-Implements [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification) Schema 1. The 32-byte identity block (Page 0) is stored at the top of EEPROM:
+Implements [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification) Schema 1. The 32-byte identity block (Page 0) is stored in the top 64 bytes of EEPROM (0x1C0–0x1DF on the ATtiny841), with the calibration page (Page 1, unused) above it:
 
 ```
 Block 0:  Schema=0x01, Name='L','i','b','e','l','l','e'
