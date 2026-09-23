@@ -12,6 +12,9 @@
 //provisioning; the firmware writes this constant into the served copy of
 //Page 0 at 0x0A and recomputes the CRC there (NW-Device-Specification).
 #define FW_FW_PATCH 1
+#ifndef FW_COMMIT
+#define FW_COMMIT "" //Set by the build wrapper (NW-Build) as -DFW_COMMIT="a1b2c3d4+"; blank in an IDE build
+#endif
 
 //The stored pages are the top 64 bytes of EEPROM in bus order: Page 0
 //(identity) at 0x1C0-0x1DF on the ATtiny841's 512-byte EEPROM, Page 1
@@ -98,6 +101,24 @@ bool uvNoAck = false;  //VEML6075 did not acknowledge during the last reading
 bool visNoAck = false; //VEML6030 did not acknowledge during the last reading
 bool adcNoAck = false; //ADS1115 did not acknowledge during the last reading
 
+static uint8_t hexNibble(char c) { //One hex digit to its value; 0 for anything else
+	if(c >= '0' && c <= '9') return c - '0';
+	if(c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if(c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return 0;
+}
+
+//Page 0 Block 3: bytes 0x18-0x1B from the first 8 hex digits of FW_COMMIT, and bit 0
+//of 0x1C when it ends in '+' (a dirty tree). A blank FW_COMMIT leaves the zeros.
+void fwCommitInto(uint8_t* b) {
+	const char* c = FW_COMMIT;
+	uint8_t n = 0;
+	while(c[n]) n++;
+	if(n < 8) return;
+	for(uint8_t i = 0; i < 4; i++) b[i] = (hexNibble(c[2*i]) << 4) | hexNibble(c[2*i + 1]);
+	b[4] = (c[n - 1] == '+') ? 0x01 : 0x00;
+}
+
 //CRC-8/SMBUS (poly 0x07, init 0x00), the NW-Device-Specification reference.
 uint8_t crc8smbus(const uint8_t* data, uint8_t len) {
 	uint8_t crc = 0x00;
@@ -115,6 +136,10 @@ void loadPage0() {
 	for(uint8_t i = 0; i < 64; i++) Reg[i] = EEPROM.read(PAGE0_BASE + i); //The stored half, Page 0 and Page 1, byte for byte
 	page0Valid = (crc8smbus(Reg, 0x1E) == Reg[0x1E]) && Reg[0x00] == 0x01;
 	Reg[0x0A] = FW_FW_PATCH;
+	//Build identity (Block 3): the first four bytes of the git commit this firmware was
+	//built from, and bit 0 of 0x1C for a dirty tree, when the build wrapper defined
+	//FW_COMMIT; zeros otherwise (an IDE build). EEPROM keeps zeros there.
+	fwCommitInto(Reg + 0x18);
 	Reg[0x1E] = crc8smbus(Reg, 0x1E);
 }
 
