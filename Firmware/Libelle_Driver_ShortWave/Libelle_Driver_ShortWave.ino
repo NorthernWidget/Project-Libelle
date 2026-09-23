@@ -33,6 +33,9 @@
 #define CHIP_VEML6030 0x04  //chip 1 (visible light)
 #define CHIP_ADS1115  0x08  //chip 2 (IR and thermistor)
 #define BIT_SLEEP    0x80
+#define FAULT_VEML6075_NOACK 0x01  //chip 0, kind 1: no acknowledge during the reading
+#define FAULT_VEML6030_NOACK 0x21  //chip 1, kind 1
+#define FAULT_ADS1115_NOACK  0x41  //chip 2, kind 1
 #define FAULT_UNIT_RESET    0xE6  //unit (7), kind 6: reset since the controller last wrote Control
 #define FAULT_UNIT_PAGE0    0xE3  //unit (7), kind 3: Page 0 CRC did not match (unprovisioned or corrupt)
 
@@ -86,6 +89,9 @@ uint8_t Config = 0; //Global config value
 
 uint8_t Reg[64] = {0}; //Initialize registers; 0x00-0x1F = Page 0 (identity), 0x20-0x27 = Page 1 Block 0 (status/control), 0x28-0x3F = Page 1 sensor data
 bool page0Valid = false; //Page 0 CRC matched what NW-Provision wrote
+bool uvNoAck = false;  //VEML6075 did not acknowledge during the last reading
+bool visNoAck = false; //VEML6030 did not acknowledge during the last reading
+bool adcNoAck = false; //ADS1115 did not acknowledge during the last reading
 
 //CRC-8/SMBUS (poly 0x07, init 0x00), the NW-Device-Specification reference.
 uint8_t crc8smbus(const uint8_t* data, uint8_t len) {
@@ -172,6 +178,7 @@ void loop() {
 		bool doVis = Reg[REG_CTRL] & CHIP_VEML6030;
 		bool doADC = Reg[REG_CTRL] & CHIP_ADS1115;
 		Reg[REG_CTRL] &= ~(BIT_TRIGGER | BIT_SLEEP); //trigger consumed; sleep not implemented
+		uvNoAck = visNoAck = adcNoAck = false;
 
 		// Config = Reg[CTRL]; //Update local register val
 		//Read new values in
@@ -195,15 +202,20 @@ void loop() {
 			SplitAndLoad(0x3C, GetADC(2)); //Thermistor (Block 3)
 		}
 
-		//Reading complete: bump the counter, set ready. Atomic so a controller's
-		//page read never straddles the update. The chips are read through
-		//SlowSoftI2CMaster calls that do not report acknowledges, so no chip
-		//fault is detected here; only the unit faults at boot are latched. //FIX! Capture the ACK in ReadWord/WriteByte and report kind 1 per chip
+		//Reading complete: load status and fault, bump the counter, set ready.
+		//Atomic so a controller's page read never straddles the update. A chip
+		//that did not acknowledge its address (NoteNoAck) gets its status bit
+		//and the latched code; a data check per chip is not yet done.
+		uint8_t status = BIT_READY;
+		if(doUV && uvNoAck) { status |= CHIP_VEML6075; Reg[REG_FAULT] = FAULT_VEML6075_NOACK; }
+		if(doVis && visNoAck) { status |= CHIP_VEML6030; Reg[REG_FAULT] = FAULT_VEML6030_NOACK; }
+		if(doADC && adcNoAck) { status |= CHIP_ADS1115; Reg[REG_FAULT] = FAULT_ADS1115_NOACK; }
+		if(status & 0x7E) status |= BIT_PANFAULT;
 		uint16_t count = Reg[REG_COUNTER] | (Reg[REG_COUNTER + 1] << 8);
 		count++;
 		cli();
 		Reg[REG_COUNTER] = count & 0xFF; Reg[REG_COUNTER + 1] = count >> 8;
-		Reg[REG_STATUS] = BIT_READY; //Set ready flag
+		Reg[REG_STATUS] = status;
 		sei();
 		digitalWrite(9, LOW); //DEBUG!
 		StartSample = false; //Clear flag when new values updated  
@@ -490,16 +502,23 @@ bool BitRead(uint8_t Val, uint8_t Pos) //Read the bit value at the specified pos
 	return (Val >> Pos) & 0x01;
 }
 
+void NoteNoAck(uint8_t Adr) //A chip did not acknowledge its address: its fault bit for this reading
+{
+	if(Adr == UV_ADR) uvNoAck = true;
+	if(Adr == VIS_ADR) visNoAck = true;
+	if(Adr == ADC_ADR) adcNoAck = true;
+}
+
 uint8_t SendCommand(uint8_t Adr, uint8_t Command)
 {
-    si.i2c_start((Adr << 1) | WRITE);
+    if(!si.i2c_start((Adr << 1) | WRITE)) NoteNoAck(Adr);
     bool Error = si.i2c_write(Command);
     return 1; //DEBUG!
 }
 
 uint8_t WriteWord(uint8_t Adr, uint8_t Command, unsigned int Data)  //Writes value to 16 bit register
 {
-	si.i2c_start((Adr << 1) | WRITE);
+	if(!si.i2c_start((Adr << 1) | WRITE)) NoteNoAck(Adr);
 	si.i2c_write(Command); //Write Command value
 	si.i2c_write(Data & 0xFF); //Write LSB
 	uint8_t Error = si.i2c_write((Data >> 8) & 0xFF); //Write MSB
@@ -509,7 +528,7 @@ uint8_t WriteWord(uint8_t Adr, uint8_t Command, unsigned int Data)  //Writes val
 
 uint8_t WriteWord_LE(uint8_t Adr, uint8_t Command, unsigned int Data)  //Writes value to 16 bit register
 {
-	si.i2c_start((Adr << 1) | WRITE);
+	if(!si.i2c_start((Adr << 1) | WRITE)) NoteNoAck(Adr);
 	si.i2c_write(Command); //Write Command value
 	si.i2c_write((Data >> 8) & 0xFF); //Write MSB
 	si.i2c_write(Data & 0xFF); //Write LSB
@@ -519,7 +538,7 @@ uint8_t WriteWord_LE(uint8_t Adr, uint8_t Command, unsigned int Data)  //Writes 
 
 uint8_t WriteConfig(uint8_t Adr, uint8_t NewConfig)
 {
-	si.i2c_start((Adr << 1) | WRITE);
+	if(!si.i2c_start((Adr << 1) | WRITE)) NoteNoAck(Adr);
 	si.i2c_write(CONF_CMD);  //Write command code to Config register
 	uint8_t Error = si.i2c_write(NewConfig);
 	si.i2c_stop();
