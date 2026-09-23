@@ -2,10 +2,23 @@
 //v0.0.0
 #include "SlowSoftI2CMaster.h"
 #include "WireS.h"
-// #include <EEPROM.h> //DEBUG!
+#include <EEPROM.h>
 //Commands
 
-#define CTRL 0x00  //Define location of onboard control/confiuration register
+#define CTRL 0x26  //Define location of onboard control/confiuration register (Schema 1 Page 1 Config byte; was 0x00, which is now the Page 0 schema byte)
+
+//Firmware patch version: bump on any behavioural change visible to the
+//library. The hardware version lives in Page 0 (EEPROM), written at
+//provisioning; the firmware writes this constant into the served copy of
+//Page 0 at 0x0A and recomputes the CRC there (NW-Device-Specification).
+#define FW_FW_PATCH 1
+
+//Page 0 (identity, 32 bytes) is the top of EEPROM: 0x1E0-0x1FF on the
+//ATtiny841's 512-byte EEPROM. Written once by NW-Provision; read at boot.
+#define PAGE0_BASE   (E2END + 1 - 32)
+#define REG_I2C_ADDR 0x1F
+#define ADR_DEFAULT  0x4C  //Schema 1 'L' (UP orientation); used when Page 0 byte 0x1F is 0xFF (was 0x40)
+#define ADR_DOWN_XOR 0x40  //DOWN orientation (solder jumper): the UP address XOR 0x40, so 0x4C -> 0x0C
 
 #define CONF_CMD 0x00
 #define ALS_CMD 0x04
@@ -51,12 +64,32 @@ float b = 0.55;
 float c = 2.46;
 float d = 0.63;
 
-volatile uint8_t ADR = 0x40; //Use arbitraty address, change using generall call??
-const uint8_t ADR_Alt = 0x41; //Alternative device address  //WARNING! When a #define is used instead, problems are caused
+volatile uint8_t ADR = ADR_DEFAULT; //I2C address: Page 0 byte 0x1F (EEPROM), or ADR_DEFAULT if unprogrammed; XOR ADR_DOWN_XOR when the jumper says DOWN
 
 uint8_t Config = 0; //Global config value
 
-uint8_t Reg[26] = {0}; //Initialize registers
+uint8_t Reg[64] = {0}; //Initialize registers; 0x00-0x1F = Page 0 (identity), 0x20-0x27 = Page 1 Block 0 (status/control), 0x28-0x3F = Page 1 sensor data
+bool page0Valid = false; //Page 0 CRC matched what NW-Provision wrote
+
+//CRC-8/SMBUS (poly 0x07, init 0x00), the NW-Device-Specification reference.
+uint8_t crc8smbus(const uint8_t* data, uint8_t len) {
+	uint8_t crc = 0x00;
+	for(uint8_t i = 0; i < len; i++) {
+		crc ^= data[i];
+		for(uint8_t b = 0; b < 8; b++) crc = (crc & 0x80) ? (crc << 1) ^ 0x07 : (crc << 1);
+	}
+	return crc;
+}
+
+//Copy Page 0 from EEPROM into the served register array, check its CRC,
+//then substitute this firmware's patch version at 0x0A and recompute the
+//CRC of the served copy (EEPROM is left as provisioned).
+void loadPage0() {
+	for(uint8_t i = 0; i < 32; i++) Reg[i] = EEPROM.read(PAGE0_BASE + i);
+	page0Valid = (crc8smbus(Reg, 0x1E) == Reg[0x1E]) && Reg[0x00] == 0x01;
+	Reg[0x0A] = FW_FW_PATCH;
+	Reg[0x1E] = crc8smbus(Reg, 0x1E);
+}
 bool StartSample = true; //Flag used to start a new converstion, make a conversion on startup
 // const unsigned int UpdateRate = 5; //Rate of update
 const unsigned int UpdateRate[] = {5, 10, 60, 300}; //FIX with better numbers! 
@@ -76,7 +109,9 @@ void setup() {
   pinMode(9, OUTPUT); //DEBUG!
   digitalWrite(10, HIGH); //DEBUG!
   digitalWrite(9, LOW); //DEBUG!
-  if(!digitalRead(ADR_SEL_PIN)) ADR = ADR_Alt; //If solder jumper is bridged, use alternate address //DEBUG!
+  loadPage0();
+  if(Reg[REG_I2C_ADDR] != 0xFF) ADR = Reg[REG_I2C_ADDR]; //Provisioned address; 0xFF = use default
+  if(!digitalRead(ADR_SEL_PIN)) ADR ^= ADR_DOWN_XOR; //If solder jumper is bridged, DOWN orientation: secondary address //DEBUG!
   Wire.begin(ADR);  //Begin slave I2C
   // EEPROM.write(0, ADR);
   InitVEML(0x48); //Init Vis (VEML6030)
