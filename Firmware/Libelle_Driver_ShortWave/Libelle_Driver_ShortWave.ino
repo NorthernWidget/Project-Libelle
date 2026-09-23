@@ -135,6 +135,9 @@ void setup() {
   loadPage0();
   if(Reg[REG_I2C_ADDR] != 0xFF) ADR = Reg[REG_I2C_ADDR]; //Provisioned address; 0xFF = use default
   if(!digitalRead(ADR_SEL_PIN)) ADR ^= ADR_DOWN_XOR; //If solder jumper is bridged, DOWN orientation: secondary address //DEBUG!
+  Reg[REG_STATUS] = 0; //Not ready: no reading yet
+  Reg[REG_CTRL] = CHIP_VEML6075 | CHIP_VEML6030 | CHIP_ADS1115; //Power-up: every chip selected
+  Reg[REG_FAULT] = page0Valid ? FAULT_UNIT_RESET : FAULT_UNIT_PAGE0; //Latched until the controller writes Control
   Wire.begin(ADR);  //Begin slave I2C
   // EEPROM.write(0, ADR);
   InitVEML(0x48); //Init Vis (VEML6030)
@@ -161,26 +164,47 @@ void loop() {
 	static unsigned long Timeout = millis() % (UpdateRate[3]*1000); //Take mod with longest update rate 
 
 	// digitalWrite(10, HIGH); //DEBUG!
+	if(Reg[REG_CTRL] & BIT_TRIGGER) StartSample = true; //Controller trigger, in addition to the free-running timer
 	if(StartSample == true) {
+		//A reading begins: clear ready, take the chip selection, consume the trigger.
+		Reg[REG_STATUS] &= ~BIT_READY;
+		bool doUV = Reg[REG_CTRL] & CHIP_VEML6075;
+		bool doVis = Reg[REG_CTRL] & CHIP_VEML6030;
+		bool doADC = Reg[REG_CTRL] & CHIP_ADS1115;
+		Reg[REG_CTRL] &= ~(BIT_TRIGGER | BIT_SLEEP); //trigger consumed; sleep not implemented
 
 		// Config = Reg[CTRL]; //Update local register val
 		//Read new values in
-		if(BitRead(Reg[CTRL], 2) == 0) {  //Only auto range if configured in Ctrl register 
+		if(doVis && BitRead(Reg[CTRL], 2) == 0) {  //Only auto range if configured in Ctrl register 
 			AutoRange_Vis();  //Run auto range
 			delay(800); //Wait for new sample
 		}
 		// digitalWrite(9, HIGH); //DEBUG!
-		Reg[CTRL] = Reg[CTRL] &= 0x7F; //Clear ready flag only while new vals being written
-		SplitAndLoad(0x28, GetALS()); //Load ALS value (Schema 1 Block 1: uint16 raw VEML6030 counts)
-		SplitAndLoad(0x2A, GetWhite()); //Load white value (Block 1: uint16 raw counts)
-		SplitAndLoad(0x30, long(GetUV(0))); //Load UVA (Block 2: int32 compensated counts)
-		SplitAndLoad(0x34, long(GetUV(1))); //Load UVB (Block 2: int32; the legacy map wrote this at 0x07 while the library read 0x06)
-		SplitAndLoad(0x2C, GetLuxGain()); //Load lux multiplier (Block 1: uint16 auto-range scaler)
-		SplitAndLoad(0x3A, GetADC(0)); //IR mid (Block 3: uint16 raw ADS1115 counts)
-		SplitAndLoad(0x38, GetADC(1)); //IR short (Block 3)
-		SplitAndLoad(0x3C, GetADC(2)); //Thermistor (Block 3)
+		if(doVis) {
+			SplitAndLoad(0x28, GetALS()); //Load ALS value (Schema 1 Block 1: uint16 raw VEML6030 counts)
+			SplitAndLoad(0x2A, GetWhite()); //Load white value (Block 1: uint16 raw counts)
+			SplitAndLoad(0x2C, GetLuxGain()); //Load lux multiplier (Block 1: uint16 auto-range scaler)
+		}
+		if(doUV) {
+			SplitAndLoad(0x30, long(GetUV(0))); //Load UVA (Block 2: int32 compensated counts)
+			SplitAndLoad(0x34, long(GetUV(1))); //Load UVB (Block 2: int32; the legacy map wrote this at 0x07 while the library read 0x06)
+		}
+		if(doADC) {
+			SplitAndLoad(0x3A, GetADC(0)); //IR mid (Block 3: uint16 raw ADS1115 counts)
+			SplitAndLoad(0x38, GetADC(1)); //IR short (Block 3)
+			SplitAndLoad(0x3C, GetADC(2)); //Thermistor (Block 3)
+		}
 
-		Reg[CTRL] = Reg[CTRL] |= 0x80; //Set ready flag
+		//Reading complete: bump the counter, set ready. Atomic so a controller's
+		//page read never straddles the update. The chips are read through
+		//SlowSoftI2CMaster calls that do not report acknowledges, so no chip
+		//fault is detected here; only the unit faults at boot are latched. //FIX! Capture the ACK in ReadWord/WriteByte and report kind 1 per chip
+		uint16_t count = Reg[REG_COUNTER] | (Reg[REG_COUNTER + 1] << 8);
+		count++;
+		cli();
+		Reg[REG_COUNTER] = count & 0xFF; Reg[REG_COUNTER + 1] = count >> 8;
+		Reg[REG_STATUS] = BIT_READY; //Set ready flag
+		sei();
 		digitalWrite(9, LOW); //DEBUG!
 		StartSample = false; //Clear flag when new values updated  
 	}
