@@ -20,6 +20,22 @@
 #define ADR_DEFAULT  0x4C  //Schema 1 'L' (UP orientation); used when Page 0 byte 0x1F is 0xFF (was 0x40)
 #define ADR_DOWN_XOR 0x40  //DOWN orientation (solder jumper): the UP address XOR 0x40, so 0x4C -> 0x0C
 
+//Page 1 Block 0 (NW-Device-Specification): universal status and control.
+#define REG_STATUS   0x20
+#define REG_CTRL     0x21
+#define REG_COUNTER  0x22
+#define REG_REQUEST  0x24  //Readings requested, uint16 LE, writable; Libelle has no chip power to hold, so it only accepts the write
+#define REG_FAULT    0x27
+#define BIT_READY    0x01
+#define BIT_PANFAULT 0x80
+#define BIT_TRIGGER  0x01
+#define CHIP_VEML6075 0x02  //Control chip-select bit and status fault bit: chip 0 (UV)
+#define CHIP_VEML6030 0x04  //chip 1 (visible light)
+#define CHIP_ADS1115  0x08  //chip 2 (IR and thermistor)
+#define BIT_SLEEP    0x80
+#define FAULT_UNIT_RESET    0xE6  //unit (7), kind 6: reset since the controller last wrote Control
+#define FAULT_UNIT_PAGE0    0xE3  //unit (7), kind 3: Page 0 CRC did not match (unprovisioned or corrupt)
+
 #define CONF_CMD 0x00
 #define ALS_CMD 0x04
 #define WHITE_CMD 0x05
@@ -89,6 +105,13 @@ void loadPage0() {
 	page0Valid = (crc8smbus(Reg, 0x1E) == Reg[0x1E]) && Reg[0x00] == 0x01;
 	Reg[0x0A] = FW_FW_PATCH;
 	Reg[0x1E] = crc8smbus(Reg, 0x1E);
+}
+
+//Registers a controller may write. Everything else is read-only and writes
+//to it are ignored (NW-Device-Specification, Page 1 rules).
+bool isWritable(uint8_t pos) {
+	return pos == REG_CTRL || pos == CTRL || pos == REG_I2C_ADDR
+	    || pos == REG_REQUEST || pos == REG_REQUEST + 1;
 }
 bool StartSample = true; //Flag used to start a new converstion, make a conversion on startup
 // const unsigned int UpdateRate = 5; //Rate of update
@@ -549,14 +572,12 @@ boolean addressEvent(uint16_t address, uint8_t count)
 
 void requestEvent()
 {	
-	//Allow for repeated start condition 
-	if(RepeatedStart) {
-		for(int i = 0; i < 2; i++) {
-			Wire.write(Reg[RegID + i]);
-		}
-	}
-	else {
-		Wire.write(Reg[RegID]);
+	//Serve up to one full page from the requested register with auto-increment.
+	//WireS clocks out only as many bytes as the controller asks for; the rest
+	//of the buffer is discarded at the stop condition. Reads past the end of
+	//the array wrap, so a controller never receives bytes from outside it.
+	for(uint8_t i = 0; i < 32; i++) {
+		Wire.write(Reg[(RegID + i) % sizeof(Reg)]);
 	}
 }
 
@@ -568,8 +589,10 @@ void receiveEvent(int DataLen)
 	    while(Wire.available() < 2); //Only option for writing would be register address, and single 8 bit value
 	    uint8_t Pos = Wire.read();
 	    uint8_t Val = Wire.read();
-	    //Check for validity of write??
+	    if(!isWritable(Pos)) return; //Read-only register: ignore the write
 	    Reg[Pos] = Val; //Set register value
+	    if(Pos == REG_CTRL) Reg[REG_FAULT] = 0; //A control write acknowledges the latched fault
+	    if(Pos == REG_I2C_ADDR) EEPROM.update(PAGE0_BASE + REG_I2C_ADDR, Val); //Persist I2C address (compare-before-write); takes effect on next boot
 	}
 
 	if(DataLen == 1){
