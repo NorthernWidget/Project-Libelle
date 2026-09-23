@@ -191,7 +191,7 @@ Chip table:
 | 2 | ADS1115 | IR short, IR mid, thermistor temperature |
 | 3 | ADXL343 | X, Y, Z (hardware v2 only) |
 
-Block 0 (0x20–0x27) is the universal block defined by [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification#page-1--sensor-data): status (ready, per-chip fault bits, pan-fault), control (trigger, chip select, sleep), reading counter, device config byte at 0x26, latched fault code at 0x27. Device data begins at 0x28. Config (0x26): bits 1:0 = update period (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); bit 2 = auto-range disable; bit 3 = run auto-range once (self-clearing); bits 7:4 reserved. Libelle's 26 data bytes exceed Blocks 1–3, so the accelerometer continues on Page 3 (0x60–0x7F).
+Block 0 (0x20–0x27) is the universal block defined by [NW-Device-Specification](https://github.com/NorthernWidget/NW-Device-Specification#page-1-sensor-data): status (ready, per-chip fault bits, pan-fault), control (trigger, chip select, sleep), reading counter, device config byte at 0x26, latched fault code at 0x27. Device data begins at 0x28. Config (0x26): bits 1:0 = update period (0 = 5 s, 1 = 10 s, 2 = 60 s, 3 = 300 s); bit 2 = auto-range disable; bit 3 = run auto-range once (self-clearing); bits 7:4 reserved. Libelle's 26 data bytes exceed Blocks 1–3, so the accelerometer continues on Page 3 (0x60–0x7F).
 
 ```
 Block 1 (0x28–0x2F)   VEML6030 — visible light
