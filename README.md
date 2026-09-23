@@ -221,11 +221,11 @@ No Page 2. Calibration constants (Steinhart-Hart coefficients, UV cross-talk com
 
 **Accelerometer (ADXL343):** In the current hardware (v1), the ADXL343 is wired to the master's I2C bus and read directly by the library at address `0x1D` (UP) or `0x53` (DOWN) — it is not bridged through the ATtiny. This requires the logger to manage two I2C addresses. In hardware v2, the ADXL343 will move to the ATtiny's software I2C bus so all data is accessible through a single address; Block 3 of Page 1 is reserved for this. See [issue #19](https://github.com/NorthernWidget-Skunkworks/Project-Libelle/issues/19).
 
-### Migration notes for Schema 1 update
+### Migration notes for the Schema 1 update (done 2026-09-23, firmware patch 1)
 
-1. **Status bit:** Current firmware uses bit 7 of `Reg[0x00]` as the ready flag; Schema 1 places the status byte at 0x20 with bit 0 as the ready flag. Both the register address and the bit position must change together.
-2. **UVB register offset:** Correct firmware to write UVB at `0x28` (Page 1, Block 1) — eliminates the ×256 error.
-3. **Auto-range:** `bit 2` and `bit 3` of CTRL need equivalent representation in Schema 1 status/config byte.
+1. **Status bit:** the ready flag moved from bit 7 of `Reg[0x00]` to Status `0x20` bit 0, with the reading counter at `0x22–0x23` beside it.
+2. **UVB register offset:** the firmware writes UVA at `0x30` and UVB at `0x34` (Page 1, Block 2, int32 each); the library reads the same addresses, so the ×256 error is gone for Schema 1 pairs. Data from the legacy pair keeps the error.
+3. **Auto-range:** the legacy CTRL bits 2 and 3 became Config `0x26` bits 2 (auto-range disable) and 3 (run auto-range once, self-clearing).
 
 ## Mechanical
 
